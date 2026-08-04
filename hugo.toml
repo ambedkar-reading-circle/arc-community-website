@@ -1,0 +1,14 @@
+baseURL = 'https://ambedkar-reading-circle.github.io/'
+locale = 'en-us'
+title = 'Ambedkar Reading Circle'
+theme = 'arc'
+
+ignoreLogs = ['warning-goldmark-raw-html']
+
+[params]
+  description = "A people's collective to occupy public spaces and public imagination with anti-caste literature, iconographies, thought, and imagination."
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
