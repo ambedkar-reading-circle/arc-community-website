@@ -1,6 +1,7 @@
 baseURL = 'https://arc-community.in/'
 locale = 'en-us'
 title = 'Ambedkar Reading Circle'
+disableKinds = ['page', 'section', 'taxonomy', 'term']
 
 ignoreLogs = ['warning-goldmark-raw-html']
 
