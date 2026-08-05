@@ -1,6 +1,9 @@
 {
   "name": "ambedkar-reading-circle-github-io",
   "compatibility_date": "2026-08-05",
+  "build": {
+    "command": ""
+  },
   "assets": {
     "directory": "public"
   }
