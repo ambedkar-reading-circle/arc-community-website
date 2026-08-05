@@ -45,13 +45,6 @@ Location: TBD (user to provide)
 
 ---
 
-## Theme Recommendation
+## Architecture
 
-**Approach:** Start with minimal Hugo blog theme, customize with these tokens.
-
-**Candidate themes:**
-- [Hugo PaperMod](https://github.com/adityatelange/hugo-PaperMod) — minimal, fast, easy to customize
-- [Hugo Starter](https://github.com/bep/hugo-starter) — blank slate, full control
-- [Hugo Bear](https://github.com/jmooring/hugo-bear-blog) — ultra-minimal, ~100 lines CSS
-
-**Recommendation:** PaperMod for blog-style content, or custom minimal theme for brand match.
+We are theme-less: styling lives in `layouts/_default/baseof.html` and `assets/css/main.css`, loaded via Hugo's asset pipeline (`resources.Get | minify | fingerprint`). Tokens are defined in CSS `:root` (see above). As the site grows, we can add more CSS partials and components without adding a full theme.

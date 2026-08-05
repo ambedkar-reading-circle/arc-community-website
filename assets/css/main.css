@@ -1,0 +1,60 @@
+:root {
+  --color-primary: #131857;
+  --color-background: #ffe;
+  --color-text: #1a1a1a;
+
+  --font-heading: "Miriam Libre", sans-serif;
+  --font-body: "Miriam Libre", sans-serif;
+  --font-fallback: system-ui, -apple-system, sans-serif;
+
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 2rem;
+  --space-xl: 4rem;
+
+  --content-width: 720px;
+  --content-width-wide: 960px;
+}
+
+* { box-sizing: border-box; }
+
+html { color-scheme: light; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  font-family: var(--font-body);
+  line-height: 1.6;
+  background: var(--color-background);
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+}
+
+main.uc {
+  max-width: var(--content-width);
+  text-align: center;
+}
+
+main.uc h1 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  color: var(--color-primary);
+  font-size: clamp(1.75rem, 5vw, 2.5rem);
+  margin: 0 0 var(--space-md);
+  letter-spacing: -0.02em;
+}
+
+main.uc .msg { font-size: 1.05rem; }
+
+main.uc .msg strong {
+  display: block;
+  margin-bottom: var(--space-sm);
+  font-size: 1.1rem;
+  color: var(--color-primary);
+}
+
+a { color: var(--color-primary); }
