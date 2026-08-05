@@ -1,0 +1,23 @@
+backend:
+  name: github
+  repo: ambedkar-reading-circle/ambedkar-reading-circle.github.io
+  branch: master
+  site_domain: https://arc-community.in
+  base_url: https://arc-community.in
+  auth_endpoint: /api/auth
+
+media_folder: static/img
+public_folder: /img
+
+collections:
+  - name: "home"
+    label: "Home / Under Construction"
+    delete: false
+    editor: { preview: true }
+    files:
+      - file: "content/_index.md"
+        label: "Under-construction message"
+        name: "home"
+        fields:
+          - { label: "Title", name: "title", widget: "string" }
+          - { label: "Message", name: "body", widget: "markdown" }
