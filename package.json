@@ -1,0 +1,30 @@
+{
+  "name": "arc-community-website",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "css:watch": "tailwindcss -i assets/css/main.css -o assets/css/tw.css --watch",
+    "css:build": "tailwindcss -i assets/css/main.css -o assets/css/tw.css --minify"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ambedkar-reading-circle/ambedkar-reading-circle.github.io.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/ambedkar-reading-circle/ambedkar-reading-circle.github.io/issues"
+  },
+  "homepage": "https://github.com/ambedkar-reading-circle/ambedkar-reading-circle.github.io#readme",
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "tailwindcss": "^4.3.3"
+  }
+}
