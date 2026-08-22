@@ -1,6 +1,5 @@
-{{ define "main" }}
-<main class="uc">
-  <h1>{{ .Title }}</h1>
-  <div class="msg">{{ .Content }}</div>
-</main>
+{{ define "content" }}
+  {{ partial "site-header.html" . }}
+  <!--<h1>{{ .Title }}</h1>-->
+  <div class="msg mt-auto">{{ .Content }}</div>
 {{ end }}

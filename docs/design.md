@@ -24,20 +24,16 @@
 
 ## Spacing
 
-| Token | Value |
-|-------|-------|
-| `--space-xs` | `0.25rem` |
-| `--space-sm` | `0.5rem` |
-| `--space-md` | `1rem` |
-| `--space-lg` | `2rem` |
-| `--space-xl` | `4rem` |
+Handled by Tailwind v4's dynamic spacing scale: every `p-*` / `m-*` / `gap-*`
+utility is a multiple of `--spacing` (`0.25rem`) — `p-2` = 0.5rem, `p-4` = 1rem,
+`p-8` = 2rem, `p-16` = 4rem.
 
 ## Layout
 
-| Token | Value |
-|-------|-------|
-| `--content-width` | `720px` |
-| `--content-width-wide` | `960px` |
+| Context | Utility | Value |
+|---------|---------|-------|
+| Content column | `max-w-3xl` | 48rem (768px) |
+| Wide content column | `max-w-5xl` | 64rem (1024px) |
 
 ## Logo
 
@@ -47,4 +43,11 @@ Location: TBD (user to provide)
 
 ## Architecture
 
-We are theme-less: styling lives in `layouts/_default/baseof.html` and `assets/css/main.css`, loaded via Hugo's asset pipeline (`resources.Get | minify | fingerprint`). Tokens are defined in CSS `:root` (see above). As the site grows, we can add more CSS partials and components without adding a full theme.
+We are theme-less. `assets/css/main.css` is the **source** stylesheet: a Tailwind
+CSS v4 input file whose design tokens live in `@theme` (see above). The Tailwind
+CLI compiles it to `assets/css/tw.css` (generated, git-ignored) via
+`npm run css:watch` (dev) / `npm run css:build` (prod), and Hugo's asset pipeline
+(`resources.Get | minify | fingerprint`) serves the fingerprinted
+`/css/tw.<hash>.css`. Layout and component styling are Tailwind utilities written
+in the templates under `layouts/`. As the site grows, we can add more CSS partials
+and utilities without adding a full theme.

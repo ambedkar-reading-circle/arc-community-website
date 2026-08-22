@@ -8,10 +8,31 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Miriam+Libre:wght@400;700&display=swap" rel="stylesheet">
-  {{ $css := resources.Get "css/main.css" | minify | fingerprint }}
+  {{ $css := resources.Get "css/tw.css" | minify | fingerprint }}
   <link rel="stylesheet" href="{{ $css.RelPermalink }}">
 </head>
 <body>
-  {{ block "main" . }}{{ end }}
+  {{ block "main" . }}
+  <div class="font-body p-2 h-dvh overflow-y-auto">
+    <div class="min-h-full flex gap-2">
+      <main class="flex flex-col flex-1">
+        <ul class="sticky top-0 flex flex-row flex-wrap items-center justify-center w-full font-primary text-xs lowercase">
+            <li class="flex-1 text-left">Educate</li>
+            <li class="flex-1 text-center">Agitate</li>
+            <li class="flex-1 text-right">Organize</li>
+        </ul>
+        {{ block "content" . }}
+          {{ partial "site-header.html" . }}
+          <div class="msg">{{ .Content }}</div>
+        {{ end }}
+      </main>
+
+      <div
+        aria-hidden="true"
+        class="grain sticky top-0 self-start h-[calc(100dvh-1rem)] rounded-lg animated-gradient w-10 md:w-1/2 lg:w-2/5"
+      ></div>
+    </div>
+  </div>
+  {{ end }}
 </body>
 </html>
