@@ -1,0 +1,38 @@
+{{- /* Open Graph + Twitter Card, with the OG image derived at build time
+       from the wordmark (wordmark centered on the brand background canvas).
+       Spec arithmetic: docs/favicon-og-jsonld-setup.md §4, generalized. */ -}}
+{{- $title := or .Title site.Title -}}
+{{- $description := or .Description site.Params.description -}}
+{{- $ogImage := "" -}}
+{{- with resources.Get site.Params.logo_path }}
+  {{- if and (le .Width 1200) (le .Height 630) }}
+    {{- /* Logo fits the 1200x630 canvas: pad to center, pixels untouched.
+           images.Padding takes CSS-shorthand values FIRST, color LAST. */ -}}
+    {{- $v := div (sub 630 .Height) 2 -}}
+    {{- $h := div (sub 1200 .Width) 2 -}}
+    {{- $ogImage = .Filter (images.Padding $v $h site.Params.brand_background) -}}
+  {{- else }}
+    {{- /* Oversized logo: scale + center-crop to 1200x630. */ -}}
+    {{- $ogImage = .Resize "1200x630 fill" -}}
+  {{- end }}
+{{- end }}
+
+<meta name="description" content="{{ $description }}">
+<link rel="canonical" href="{{ .Permalink }}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{{ site.Title }}">
+<meta property="og:title" content="{{ $title }}">
+<meta property="og:description" content="{{ $description }}">
+<meta property="og:url" content="{{ .Permalink }}">
+{{- with $ogImage }}
+  <meta property="og:image" content="{{ .Permalink }}">
+  <meta property="og:image:width" content="{{ .Width }}">
+  <meta property="og:image:height" content="{{ .Height }}">
+  <meta property="og:image:alt" content="{{ site.Params.og_image_alt | default "Ambedkar Reading Circle wordmark on a cream background" }}">
+{{- end }}
+{{- $ogLocale := "en_US" }}
+{{- $localeTag := site.Language.Locale }}
+{{- if in $localeTag "-" }}{{ $parts := split $localeTag "-" }}{{ $ogLocale = printf "%s_%s" (index $parts 0) (upper (index $parts 1)) }}{{ end }}
+<meta property="og:locale" content="{{ $ogLocale }}">
+<meta name="twitter:card" content="summary_large_image">
+{{- with site.Params.twitter_handle }}<meta name="twitter:site" content="{{ . }}">{{ end }}

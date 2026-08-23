@@ -8,6 +8,23 @@ ignoreLogs = ['warning-goldmark-raw-html']
 [params]
   description = "A people's collective to occupy public spaces and public imagination with anti-caste literature, iconographies, thought, and imagination."
   status = "under construction"
+  social = [
+    "https://www.instagram.com/arc.bangalore/",
+  ]
+
+  # Brand constants — template-side single source of truth.
+  # CSS-side source of the same values: assets/css/main.css @theme (never tw.css — compiled).
+  # The same cream is baked into assets/images/pixel-ffffee.png (hex in filename) —
+  # rename/regenerate that pixel if brand_background ever changes.
+  brand_primary = "#131857"
+  brand_background = "#ffffee"
+
+  # Asset paths — consumed by every partial that references these images.
+  icon_path = "images/arc-favicon.png"       # square mark: favicon/apple-touch/JSON-LD logo
+  logo_path = "images/arc-logo-blue.png"     # wordmark: header + OG image derivation
+
+  twitter_handle = ""                        # e.g. "@arc_community" — emits twitter:site only when set
+  og_image_alt = "Ambedkar Reading Circle wordmark on a cream background"
 
 [markup]
   [markup.goldmark]

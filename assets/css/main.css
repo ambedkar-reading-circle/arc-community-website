@@ -5,7 +5,9 @@
 @import "tailwindcss";
 
 /* Design tokens (docs/design.md) exposed as Tailwind utilities:
-   bg-primary, text-primary, from-primary, font-heading, ... */
+   bg-primary, text-primary, from-primary, font-heading, ...
+   Template-side source of the same color values: hugo.toml [params]
+   (brand_primary / brand_background) — keep both in sync. */
 @theme {
   --color-primary: #131857;
   --color-background: #ffe;

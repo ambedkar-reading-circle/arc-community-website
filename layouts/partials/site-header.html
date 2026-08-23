@@ -1,7 +1,9 @@
 <div class="site-header">
   <a href="{{ .Site.Home.RelPermalink }}" aria-label="Home">
+    {{ $logo := resources.Get site.Params.logo_path }}
+    {{ if not $logo }}{{ errorf "site-header: logo asset missing (params.logo_path = %q)" site.Params.logo_path }}{{ end }}
     <img
-      src="{{ "images/arc-logo-blue.png" | relURL }}"
+      src="{{ $logo.RelPermalink }}"
       alt="{{ .Site.Title }} logo"
       class="w-32 rounded-lg border border-primary my-3"
     >

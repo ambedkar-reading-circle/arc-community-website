@@ -1,0 +1,40 @@
+{{- /* Icons + web manifest, derived from the square mark at build time.
+       Constants come from hugo.toml [params]; sizes are read from the
+       derived images so emitted dimensions always match the files. */ -}}
+{{- with resources.Get site.Params.icon_path }}
+  {{- $icon := . -}}
+  {{- $favicon32 := $icon.Resize "32x32" -}}
+  {{- $favicon16 := $icon.Resize "16x16" -}}
+  {{- $icon192 := $icon.Resize "192x192" -}}
+  {{- $icon512 := $icon.Resize "512x512" -}}
+
+  {{- /* iOS composites transparent pixels as BLACK, and images.Padding
+         preserves alpha — an opaque touch icon needs an opaque base.
+         pixel-ffffee.png (1x1 opaque, hex in filename = brand_background)
+         is upscaled to the canvas and the mark is overlaid on 20px margins. */ -}}
+  {{- with resources.Get "images/pixel-ffffee.png" }}
+    {{- $touch := (.Resize "180x180").Filter (images.Overlay ($icon.Resize "140x140") 20 20) }}
+    <link rel="apple-touch-icon" sizes="{{ printf "%dx%d" $touch.Width $touch.Height }}" href="{{ $touch.RelPermalink }}">
+  {{- end }}
+
+  {{- $icons := slice
+        (dict "src" $icon192.RelPermalink "sizes" (printf "%dx%d" $icon192.Width $icon192.Height) "type" "image/png" "purpose" "any maskable")
+        (dict "src" $icon512.RelPermalink "sizes" (printf "%dx%d" $icon512.Width $icon512.Height) "type" "image/png" "purpose" "any maskable")
+  -}}
+
+  {{- $manifest := dict
+        "name" site.Title
+        "short_name" "ARC"
+        "start_url" "/"
+        "display" "standalone"
+        "background_color" site.Params.brand_background
+        "theme_color" site.Params.brand_primary
+        "icons" $icons
+  -}}
+  {{- $manifestResource := resources.FromString "site.webmanifest" ($manifest | jsonify) -}}
+
+  <link rel="icon" type="image/png" sizes="{{ printf "%dx%d" $favicon32.Width $favicon32.Height }}" href="{{ $favicon32.RelPermalink }}">
+  <link rel="icon" type="image/png" sizes="{{ printf "%dx%d" $favicon16.Width $favicon16.Height }}" href="{{ $favicon16.RelPermalink }}">
+  <link rel="manifest" href="{{ $manifestResource.RelPermalink }}">
+  <meta name="theme-color" content="{{ site.Params.brand_primary }}">
+{{- end }}

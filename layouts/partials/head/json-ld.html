@@ -1,0 +1,33 @@
+{{- /* Square mark for the Organization logo (schema.org wants square, not wordmark). */ -}}
+{{- $logo := "" -}}
+{{- with resources.Get site.Params.icon_path }}{{ $logo = .Permalink }}{{ end -}}
+
+{{- /* sameAs: profile URLs from config; empty slice if unset. */ -}}
+{{- $sameAs := default slice site.Params.social -}}
+
+{{- $orgID := printf "%s#organization" site.BaseURL -}}
+{{- $siteID := printf "%s#website" site.BaseURL -}}
+
+{{- $org := dict
+      "@type" "Organization"
+      "@id" $orgID
+      "name" site.Title
+      "alternateName" "ARC"
+      "url" site.BaseURL
+      "description" site.Params.description
+      "sameAs" $sameAs
+-}}
+{{- with $logo }}{{ $org = merge $org (dict "logo" .) }}{{ end -}}
+
+{{- $graph := slice
+      $org
+      (dict
+        "@type" "WebSite"
+        "@id" $siteID
+        "name" site.Title
+        "url" site.BaseURL
+        "inLanguage" site.Language.Lang
+        "publisher" (dict "@id" $orgID)
+      )
+-}}
+<script type="application/ld+json">{{ dict "@context" "https://schema.org" "@graph" $graph | jsonify | safeJS }}</script>
