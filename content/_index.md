@@ -1,7 +1,7 @@
 ---
-title: "Ambedkar Reading Circle"
+title: Ambedkar Reading Circle
 ---
-**Website under construction.**
+**Website is under construction.**
 
 A people's collective to occupy public spaces and public imagination with
 anti-caste literature, iconographies, thought, and imagination.
