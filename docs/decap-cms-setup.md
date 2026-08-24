@@ -1,9 +1,9 @@
 # Decap CMS Setup & Wiring Guide
 
-**Status:** Draft — awaiting execution
+**Status:** Draft — Stage 1 executed via native Worker wiring (`src/` handlers + router, uncommitted); Stages 2–7 awaiting execution
 **Date:** 2026-08-23
 **Audience:** Engineer taking ownership of the ARC content pipeline
-**Time estimate:** 60–90 minutes end to end (30 min if GitHub/Cloudflare access is already sorted)
+**Time estimate:** 75–105 minutes end to end (45 min if GitHub/Cloudflare access is already sorted)
 
 This document does two things:
 
@@ -24,8 +24,9 @@ Every stage ends with a **checkpoint**. Do not move to the next stage until the 
 - [5. Stage 3 — Register the GitHub OAuth App](#5-stage-3--register-the-github-oauth-app)
 - [6. Stage 4 — Set the Cloudflare secrets](#6-stage-4--set-the-cloudflare-secrets)
 - [7. Stage 5 — End-to-end test](#7-stage-5--end-to-end-test)
-- [8. Stage 6 — Recommended next steps](#8-stage-6--recommended-next-steps)
-- [9. Troubleshooting](#9-troubleshooting)
+- [8. Stage 6 — Validate the OAuth state (CSRF hardening)](#8-stage-6--validate-the-oauth-state-csrf-hardening)
+- [9. Stage 7 — Recommended next steps](#9-stage-7--recommended-next-steps)
+- [10. Troubleshooting](#10-troubleshooting)
 - [Appendix A — The OAuth flow, annotated](#appendix-a--the-oauth-flow-annotated)
 - [Appendix B — Decap config.yml, annotated](#appendix-b--decap-configyml-annotated)
 
@@ -65,9 +66,9 @@ The full round-trip:
                                                                                        within ~1 min
 ```
 
-Why the OAuth dance at all? Because Decap needs permission to commit to your repo. It asks GitHub for a personal token via OAuth. GitHub will only hand that token to a **registered OAuth App** through a **server-side code exchange** — and the "server" here is two small functions we host ourselves (`functions/api/auth.js` and `functions/api/callback.js`). Those functions need two secrets (a GitHub client ID and client secret) to prove which app is asking.
+Why the OAuth dance at all? Because Decap needs permission to commit to your repo. It asks GitHub for a personal token via OAuth. GitHub will only hand that token to a **registered OAuth App** through a **server-side code exchange** — and the "server" here is two small handlers we host ourselves (`src/api/auth.js` and `src/api/callback.js`). Those handlers need two secrets (a GitHub client ID and client secret) to prove which app is asking.
 
-That's the entire system: **Decap UI + our two auth functions + GitHub + Cloudflare rebuild.** Four pieces, each verified independently in the stages below.
+That's the entire system: **Decap UI + our two auth handlers + GitHub + Cloudflare rebuild.** Four pieces, each verified independently in the stages below.
 
 ---
 
@@ -77,11 +78,11 @@ That's the entire system: **Decap UI + our two auth functions + GitHub + Cloudfl
 |---|---|---|
 | CMS app shell | `static/admin/index.html` | ✅ Working — loads Decap from unpkg CDN; Hugo copies `static/` verbatim, so it deploys at `/admin/` |
 | CMS config | `static/admin/config.yml` | ✅ Working — deployed and verified live; points at `ambedkar-reading-circle/ambedkar-reading-circle.github.io`, branch `master` (matches the actual remote — the rename was handled correctly) |
-| OAuth start | `functions/api/auth.js` | ⚠️ Written, correct, **never deployed** |
-| OAuth finish | `functions/api/callback.js` | ⚠️ Written, correct, **never deployed** |
+| OAuth start | `src/api/auth.js` | ⚠️ Native Worker handler, correct, **never deployed** |
+| OAuth finish | `src/api/callback.js` | ⚠️ Native Worker handler, correct, **never deployed** |
 | Content | `content/_index.md` | ✅ Working — the under-construction homepage |
 | Site build | `layouts/`, `hugo.toml` | ✅ Working — Hugo renders `content/_index.md` into the homepage |
-| Deploy config | `wrangler.jsonc` | ⚠️ Serves `public/` as static assets, but has no `main` — so the auth functions don't ship |
+| Deploy config | `wrangler.jsonc` | ✅ Wired — `main: "src/worker.js"` + `run_worker_first: ["/api/*"]`, serves `public/` as static assets |
 | Secrets | — | ❌ `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` not yet set on Cloudflare |
 | GitHub OAuth App | — | ❌ Not yet registered |
 
@@ -95,71 +96,165 @@ Observed behavior (verified 2026-08-23):
 
 Root cause — a deployment-convention mismatch:
 
-- The `functions/` directory is a **Cloudflare Pages** convention. On Pages, any file at `functions/api/auth.js` is *automatically* routed to `/api/auth`. Zero config.
-- But this site is deployed as a **Cloudflare Worker with static assets** (see `wrangler.jsonc` — it has an `assets.directory` key; also see git history: *"Add Wrangler config to fix Cloudflare Pages deploy"*). A Worker-assets deployment **silently ignores** a `functions/` directory. Static files ship; the functions don't; `/api/*` 404s.
+- The OAuth handlers were originally written in the **Cloudflare Pages** *Functions* style: on Pages, a file named `api/auth.js` inside a top-level `functions` directory is *automatically* routed to `/api/auth`. Zero config.
+- But this site is deployed as a **Cloudflare Worker with static assets** (see `wrangler.jsonc` — it has an `assets.directory` key; also see git history: *"Add Wrangler config to fix Cloudflare Pages deploy"*). A Worker-assets deployment **silently ignores** that Pages convention. Static files ship; the handlers don't; `/api/*` 404s.
 
-So the answer to "we have a function but never deployed it, right?" is **yes, exactly** — the code is complete and correct; it simply has no route into the deployed Worker.
+So the answer to "we have a function but never deployed it, right?" is **yes, exactly** — the logic is complete and correct; it simply had no route into the deployed Worker.
 
-The fix is not to rewrite the functions. It's to add a ~20-line Worker entry that routes `/api/*` to them. That's Stage 1.
+The fix is to port the OAuth logic **natively** into handlers under `src/api/`, dispatched by a small router in `src/worker.js` registered via `main` in `wrangler.jsonc` — and to delete the inert `functions` directory outright. Why a native rewrite rather than an adapter around the Pages-style code: the Pages `context` object (`params`, `waitUntil`, `next`, `data`) was pure ceremony neither handler ever used; one convention in one place beats two running in parallel; and Pages-style functions are the dead end on this deployment, not the direction of travel. That's Stage 1.
 
 ---
 
 ## 3. Stage 1 — Route `/api/*` into the Worker (code changes)
 
-Four small changes, each with its own commit-worthy checkpoint. All are local repo edits.
+Seven small steps, each verifiable. All are local repo edits.
 
-### Step 1.1 — Create `src/worker.js`
+### Step 1.1 — Create `src/api/auth.js`
 
-Create the file `src/worker.js` (new `src/` directory at repo root) with exactly this content:
+Create the file `src/api/auth.js` (new `src/api/` directory at repo root) with exactly this content:
 
 ```js
-import { onRequest as auth } from "../functions/api/auth.js";
-import { onRequest as callback } from "../functions/api/callback.js";
+export async function handleAuth(request, env) {
+    const client_id = env.GITHUB_CLIENT_ID;
 
-function adapt(handler, request, env, ctx) {
-    return handler({
-        request,
-        env,
-        params: {},
-        waitUntil: ctx.waitUntil.bind(ctx),
-        next: () => env.ASSETS.fetch(request),
-        data: {},
-    });
+    try {
+        const url = new URL(request.url);
+        const redirectUrl = new URL('https://github.com/login/oauth/authorize');
+        redirectUrl.searchParams.set('client_id', client_id);
+        redirectUrl.searchParams.set('redirect_uri', url.origin + '/api/callback');
+        redirectUrl.searchParams.set('scope', 'repo user');
+        redirectUrl.searchParams.set(
+            'state',
+            crypto.getRandomValues(new Uint8Array(12)).join(''),
+        );
+        return Response.redirect(redirectUrl.href, 302);
+    } catch (error) {
+        console.error(error);
+        return new Response('Internal Server Error', { status: 500 });
+    }
 }
-
-export default {
-    async fetch(request, env, ctx) {
-        const { pathname } = new URL(request.url);
-
-        if (pathname === "/api/auth") return adapt(auth, request, env, ctx);
-        if (pathname === "/api/callback") return adapt(callback, request, env, ctx);
-
-        return env.ASSETS.fetch(request);
-    },
-};
 ```
 
 **What this is and why it looks like this:**
 
-- The existing functions are written in the Pages style: they export `onRequest(context)` and pull `request`, `env`, etc. out of a single `context` object. We keep them **unmodified** (they're proven, standard code) and write a thin adapter that manufactures that `context` object from a standard Worker's `(request, env, ctx)` signature.
-- `env.ASSETS` is an automatic binding (present whenever a Worker has static assets configured) that serves files from `public/`. The final `return env.ASSETS.fetch(request)` is a fallback for any non-API path that didn't match a static file — with this config that basically never happens, but the Worker must return *something* for every request.
-- You do **not** need to touch `functions/api/auth.js` or `functions/api/callback.js`.
+- Native Worker signature: `handleAuth(request, env)` — no Pages-style `onRequest(context)` destructure. The Pages `context` carried `params`, `waitUntil`, `next`, and `data`; this handler never used any of them.
+- The redirect is **302 from birth** (the old demo code used `301`). **Why:** `301` means *Moved Permanently* — browsers and CDNs cache it aggressively. The URL being redirected to contains a fresh random `state` parameter on every login, and a cached 301 keeps replaying the *stale* URL, which can silently break repeat logins (symptom: login works once, then weirdly fails or skips screens). `302` (temporary) is the correct status for an OAuth redirect. (This line is replaced once more in Step 6.1 to attach the state cookie — the `302` stays.)
+- `scope: 'repo user'` is kept as-is — narrowing to `public_repo` is deliberately a Stage 7 item, not mixed into this port.
+- The 500 body is a generic `'Internal Server Error'`, not the raw `error.message` the demo leaked. The real detail still reaches the operator via `console.error` → Worker logs (`npx wrangler tail`); the client never needs it.
 
-### Step 1.2 — Register the Worker in `wrangler.jsonc`
+### Step 1.2 — Create `src/api/callback.js`
 
-Add a `main` field so Wrangler knows to bundle and deploy the Worker alongside the assets.
+Create the file `src/api/callback.js` with exactly this content:
 
-**Before:**
+```js
+function renderBody(status, content) {
+    const html = `
+    <script>
+      const receiveMessage = (message) => {
+        window.opener.postMessage(
+          'authorization:github:${status}:${JSON.stringify(content)}',
+          message.origin
+        );
+        window.removeEventListener("message", receiveMessage, false);
+      }
+      window.addEventListener("message", receiveMessage, false);
+      window.opener.postMessage("authorizing:github", "*");
+    </script>
+    `;
+    const blob = new Blob([html]);
+    return blob;
+}
 
-```jsonc
-{
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "arc-community-website",
-  "compatibility_date": "2026-08-05",
-  ...
+function htmlResponse(status, body) {
+    return new Response(body, {
+        headers: {
+            'content-type': 'text/html;charset=UTF-8',
+            'cache-control': 'no-store',
+        },
+        status,
+    });
+}
+
+export async function handleCallback(request, env) {
+    const client_id = env.GITHUB_CLIENT_ID;
+    const client_secret = env.GITHUB_CLIENT_SECRET;
+
+    try {
+        const url = new URL(request.url);
+        const code = url.searchParams.get('code');
+        if (!code) {
+            return new Response('missing code parameter', { status: 400 });
+        }
+        const response = await fetch(
+            'https://github.com/login/oauth/access_token',
+            {
+                method: 'POST',
+                headers: {
+                    'content-type': 'application/json',
+                    'user-agent': 'arc-community-website-oauth',
+                    'accept': 'application/json',
+                },
+                body: JSON.stringify({ client_id, client_secret, code }),
+            },
+        );
+        const result = await response.json();
+        if (result.error) {
+            return htmlResponse(401, renderBody('error', result));
+        }
+        const token = result.access_token;
+        const provider = 'github';
+        const responseBody = renderBody('success', {
+            token,
+            provider,
+        });
+        return htmlResponse(200, responseBody);
+
+    } catch (error) {
+        console.error(error);
+        return htmlResponse(500, 'Internal Server Error');
+    }
+}
 ```
 
-**After:**
+**What this is and why it looks like this:**
+
+- Same native signature change: `handleCallback(request, env)`; the Pages `context` fields were unused here too.
+- The `user-agent` on the token-exchange request changes from the demo leftover `'cloudflare-functions-github-oauth-login-demo'` to `'arc-community-website-oauth'`. GitHub requires a user-agent on API calls; the string itself is arbitrary, so claim it.
+- `renderBody` is byte-for-byte identical to the original. It builds the HTML that performs the `postMessage` handshake with the Decap popup — the message format (`authorization:github:{status}:{token}` plus the `authorizing:github` ping) is Decap's contract. **Do not reformat the template literal** — its whitespace and indentation are inside the string.
+- A request without a `code` parameter gets **400 immediately** — no wasted round trip to GitHub's token endpoint and no cryptic upstream error relayed back to the popup.
+- The three HTML responses are built by one `htmlResponse(status, body)` helper instead of three copy-pasted `new Response(...)` blocks. It also sets **`cache-control: no-store`** on all of them — the success body embeds the access token, and that must never land in any cache. (Stage 6 extends this helper with an optional `extraHeaders` argument to burn the state cookie.)
+- Like `auth.js`, the 500 body is generic (`'Internal Server Error'`); the real detail goes to Worker logs via `console.error`.
+
+### Step 1.3 — Create `src/worker.js` (the router)
+
+Create the file `src/worker.js` with exactly this content:
+
+```js
+import { handleAuth } from './api/auth.js';
+import { handleCallback } from './api/callback.js';
+
+export default {
+  async fetch(request, env) {
+    const { pathname } = new URL(request.url);
+
+    if (pathname === '/api/auth') return handleAuth(request, env);
+    if (pathname === '/api/callback') return handleCallback(request, env);
+
+    return env.ASSETS.fetch(request);
+  },
+};
+```
+
+**How requests now route** (this is the part worth understanding):
+
+1. A request arrives at Cloudflare.
+2. By default, **static assets are checked first** — if a file in `public/` matches the path, it's served and the Worker never runs. This is why the site's pages keep working exactly as before, with zero overhead.
+3. With `run_worker_first: ["/api/*"]` set (Step 1.4), `/api/*` skips the asset lookup and invokes the Worker directly. The router matches the pathname and dispatches to a handler.
+4. Anything that isn't an API route falls through to `env.ASSETS.fetch(request)`. `env.ASSETS` is an automatic binding (present whenever a Worker has static assets configured) that serves files from `public/`. A Worker must return *something* for every request — this fallback is what makes that true.
+
+### Step 1.4 — Wire the Worker into `wrangler.jsonc`
+
+Two keys: `main` (so Wrangler knows to bundle and deploy the Worker alongside the assets) and `run_worker_first` inside the `assets` block (so `/api/*` always invokes the Worker, even if someone someday adds a `public/api/` file — belt-and-suspenders; behavior is otherwise unchanged). Final block:
 
 ```jsonc
 {
@@ -167,45 +262,28 @@ Add a `main` field so Wrangler knows to bundle and deploy the Worker alongside t
   "name": "arc-community-website",
   "main": "src/worker.js",
   "compatibility_date": "2026-08-05",
-  ...
-```
-
-(Only the `main` line is new. Leave everything else as-is.)
-
-**How requests now route** (this is the part worth understanding):
-
-1. A request arrives at Cloudflare.
-2. By default, **static assets are checked first** — if a file in `public/` matches the path, it's served and the Worker never runs. This is why the site's pages keep working exactly as before, with zero overhead.
-3. If no asset matches (e.g. `/api/auth` — there's no such file in `public/`), **the Worker runs** and hits our router.
-
-**Optional, recommended for explicitness** — make the intent visible in config by forcing `/api/*` to always invoke the Worker first, inside the `assets` block:
-
-```jsonc
+  "observability": {
+    "enabled": true
+  },
   "assets": {
     "directory": "public",
     "run_worker_first": ["/api/*"]
   },
+  "compatibility_flags": ["nodejs_compat"]
+}
 ```
 
-This is belt-and-suspenders: it guarantees `/api/*` reaches the Worker even if someone someday adds a `public/api/` file. It's safe to add; behavior is otherwise unchanged.
+### Step 1.5 — Delete the old `functions` directory
 
-### Step 1.3 — Fix the redirect status in `functions/api/auth.js`
+From the repo root (PowerShell):
 
-**Before (line 23):**
-
-```js
-        return Response.redirect(redirectUrl.href, 301);
+```powershell
+Remove-Item -Recurse -Force functions
 ```
 
-**After:**
+**Why delete instead of keep:** nothing deploys it, so keeping it invites exactly the trap this stage fixes — "I added a file under `functions`, why doesn't it route?" One convention, one place. After Step 1.3 nothing imports from it; the delete proves that (the dry-run in Step 1.6 would fail on a dangling import). `git status` shows the deletions; they're committed in Step 1.7.
 
-```js
-        return Response.redirect(redirectUrl.href, 302);
-```
-
-**Why:** `301` means *Moved Permanently* — browsers and CDNs cache it aggressively. The URL being redirected to contains a fresh random `state` parameter on every login, and a cached 301 keeps replaying the *stale* URL, which can silently break repeat logins (symptom: login works once, then weirdly fails or skips screens). `302` (temporary) is the correct status for an OAuth redirect. One-character-class fix, real failure mode.
-
-### Step 1.4 — Verify the build locally
+### Step 1.6 — Verify the build locally
 
 From the repo root (PowerShell):
 
@@ -226,11 +304,12 @@ If you see the upload size, the Worker bundles successfully. `--dry-run` touches
 
 **Checkpoint 1:** dry-run succeeds and reports a non-zero upload size (that's your Worker code being bundled).
 
-### Step 1.5 — Commit
+### Step 1.7 — Commit
 
 ```powershell
-git add src/worker.js wrangler.jsonc functions/api/auth.js
-git commit -m "Wire OAuth functions into Worker and fix auth redirect status"
+git add src/ wrangler.jsonc
+git add -A functions      # stages the old directory's deletion (Step 1.5)
+git commit -m "Serve OAuth endpoints natively from the Worker"
 ```
 
 (Adapt the message to house style; the point is: this is a self-contained, revertable change.)
@@ -271,7 +350,7 @@ curl.exe -I https://arc-community.in/api/auth
 
 (Use `curl.exe`, not `curl` — in PowerShell 5.1, bare `curl` is an alias for `Invoke-WebRequest` and behaves differently.)
 
-Expected result: **HTTP 302** (or 301 if Stage 3 isn't done yet — see below) with a `Location` header pointing at `https://github.com/login/oauth/authorize?...`.
+Expected result: **HTTP 302** (a 301 here means Step 1.1's `302` isn't deployed — re-check the deployment) with a `Location` header pointing at `https://github.com/login/oauth/authorize?...`.
 
 - Getting **404** still → the Worker didn't deploy; re-check `main` in `wrangler.jsonc` and the deployment logs.
 - Getting **302** → your functions are live. The `Location` URL will currently contain `client_id=undefined` — **that is expected** at this point; the secrets don't exist yet. That's Stage 4.
@@ -298,7 +377,7 @@ Decap's login can't work until GitHub knows about "an app" asking for repo acces
 
 **Two rules to understand about the callback URL:**
 
-- It must **exactly match** what `functions/api/auth.js` constructs at runtime: `url.origin + '/api/callback'` — i.e. the origin of wherever `/api/auth` was reached from. Since we always reach it via `https://arc-community.in/admin/`, the callback is `https://arc-community.in/api/callback`. GitHub shows a `redirect_uri_mismatch` error page if they differ by even a slash.
+- It must **exactly match** what `src/api/auth.js` constructs at runtime: `url.origin + '/api/callback'` — i.e. the origin of wherever `/api/auth` was reached from. Since we always reach it via `https://arc-community.in/admin/`, the callback is `https://arc-community.in/api/callback`. GitHub shows a `redirect_uri_mismatch` error page if they differ by even a slash.
 - Corollary: if you ever test the admin at the raw `*.workers.dev` domain, the runtime callback would be `https://<something>.workers.dev/api/callback` → mismatch → breakage. **Always use the custom domain for admin work.**
 
 **Checkpoint 3:** you have a Client ID (hex-ish string) and a Client Secret saved somewhere safe. No GitHub-side errors so far.
@@ -350,13 +429,116 @@ Now do the whole flow as an editor would:
 - **The token lives in the browser's localStorage** for `arc-community.in` after login. The CMS **Logout** button clears it. Shared/borrowed machines: log out when done.
 - The first OAuth login on a fresh app may show a scary "unverified application" warning screen — that's normal for unverified apps; it can be approved for the org if desired.
 
-**Checkpoint 5 (the finish line):** an edit made in `/admin` appears as a commit on `master` and shows up on the live site with no human touching the terminal.
+**Checkpoint 5 (pipeline proven):** an edit made in `/admin` appears as a commit on `master` and shows up on the live site with no human touching the terminal.
+
+**Do not stop here.** Checkpoint 5 proves the pipeline, but the OAuth flow still carries a weakness inherited from the demo it's based on: `auth.js` generates a `state` param that `callback.js` never checks — no CSRF protection on login. Stage 6 closes it with a ~10-line stateless fix, and it must land **before any editor beyond the core team gets the `/admin` URL**. The finish line is Checkpoint 6.
 
 ---
 
-## 8. Stage 6 — Recommended next steps
+## 8. Stage 6 — Validate the OAuth state (CSRF hardening)
 
-Once the basics work, in priority order:
+Scheduled deliberately as the step right after Checkpoint 5, not as a "next step." Two weaknesses inherited from the demo this flow is based on were triaged in review:
+
+- The **redirect status** was born fixed: `src/api/auth.js` has returned `302` since Step 1.1 — the demo's cacheable `301` would have broken repeat logins, and no retro-fix is needed here.
+- **State validation** is deferred no further than here. `auth.js` has always sent a random `state` param; `callback.js` has never checked it. Until this stage there is **no CSRF protection on login**: an attacker can complete the OAuth flow themselves and trick a victim's browser into adopting the attacker's token (the victim then unknowingly edits and publishes under the attacker's identity). Tolerable while the editor group is the core team; a hard blocker the moment anyone else gets the `/admin` URL.
+
+Note the ordering dependency: a cached 301 would defeat this check too (it replays a stale state against a fresh cookie), which is why the `302` (Step 1.1) had to be in place before this stage. Fix the redirect *before* adding state checks, never after.
+
+The fix is stateless — no KV, no storage. `auth.js` plants the state in a short-lived cookie; `callback.js` compares cookie vs. query param and fails closed. The popup flow stays on `arc-community.in` the whole way, so the cookie is guaranteed to ride along.
+
+### Step 6.1 — Plant the state cookie in `src/api/auth.js`
+
+`Response.redirect()` cannot attach headers, so replace the redirect line (the one Step 1.1 wrote) with a `Response` that sets both the `Location` and the cookie. Hoist the state into a variable so the URL and the cookie share one value:
+
+**Before (as written in Step 1.1):**
+
+```js
+        redirectUrl.searchParams.set(
+            'state',
+            crypto.getRandomValues(new Uint8Array(12)).join(''),
+        );
+        return Response.redirect(redirectUrl.href, 302);
+```
+
+**After:**
+
+```js
+        const state = crypto.getRandomValues(new Uint8Array(12)).join('');
+        redirectUrl.searchParams.set('state', state);
+        return new Response(null, {
+            status: 302,
+            headers: {
+                Location: redirectUrl.href,
+                'Set-Cookie': `oauth_state=${state}; Max-Age=600; Path=/api; HttpOnly; SameSite=Lax; Secure`,
+            },
+        });
+```
+
+Cookie attributes, so this isn't cargo-culted: `Max-Age=600` gives the editor 10 minutes on GitHub's consent screen; `Path=/api` limits the cookie to the two auth endpoints; `HttpOnly` keeps it out of page JavaScript; `SameSite=Lax` still rides the top-level navigation back from GitHub while blocking the cross-site requests an attacker needs; `Secure` because the site is HTTPS-only.
+
+### Step 6.2 — Verify the state in `src/api/callback.js`
+
+At the top of the `try` block, right after `const url = new URL(request.url);`, reject anything that doesn't match:
+
+```js
+        const state = url.searchParams.get('state');
+        const cookie = (request.headers.get('Cookie') || '').match(
+            /(?:^|;\s*)oauth_state=([^;]+)/,
+        );
+        if (!state || !cookie || cookie[1] !== state) {
+            return new Response('state mismatch', { status: 403 });
+        }
+```
+
+Then burn the cookie after a successful exchange. The `htmlResponse` helper from Step 1.2 doesn't take extra headers, so extend it, then pass the burn header on the success call only:
+
+```js
+function htmlResponse(status, body, extraHeaders = {}) {
+    return new Response(body, {
+        headers: {
+            'content-type': 'text/html;charset=UTF-8',
+            'cache-control': 'no-store',
+            ...extraHeaders,
+        },
+        status,
+    });
+}
+```
+
+```js
+        return htmlResponse(200, responseBody, {
+            'Set-Cookie': 'oauth_state=; Max-Age=0; Path=/api; HttpOnly; SameSite=Lax; Secure',
+        });
+```
+
+(In the helper, only the `extraHeaders = {}` parameter and its spread are new; at the call site, only the `Set-Cookie` header.) One-time use by design: if anything replays the callback URL later, the state no longer matches and the check fails closed.
+
+### Step 6.3 — Commit, deploy, verify
+
+```powershell
+git add src/api/auth.js src/api/callback.js
+git commit -m "Validate OAuth state against a cookie (CSRF hardening)"
+git push origin master
+```
+
+Then two tests:
+
+1. **Positive:** full login at `https://arc-community.in/admin/` — must still reach Checkpoint-5 behavior (popup closes, CMS loads, an edit publishes).
+2. **Negative:**
+
+   ```powershell
+   curl.exe -I "https://arc-community.in/api/callback?code=x&state=bogus"
+   ```
+
+   Expected: **HTTP 403** — no matching cookie, so the check rejects the request before any token exchange happens.
+
+**Checkpoint 6 (the finish line):** a real login still works end-to-end AND a bogus callback gets 403. Only now hand the `/admin` URL to editors beyond the core team.
+
+---
+
+## 9. Stage 7 — Recommended next steps
+
+With the pipeline working (Stage 5) and hardened (Stage 6), remaining improvements in priority order:
 
 1. **Editorial workflow** — in `static/admin/config.yml`, add as the first key under `backend:`:
 
@@ -366,23 +548,22 @@ Once the basics work, in priority order:
 
    Edits then become **draft commits on a branch + open pull request** instead of direct commits to `master`. Someone reviews the PR, merges, site updates. Recommended once more than one person edits, or before handing admin access to non-technical editors.
 
-2. **Narrow the OAuth scope** — `functions/api/auth.js` requests `scope: 'repo user'`. For a public repo, `public_repo` suffices and grants less. Edit the string in `auth.js`, commit, push. (Existing tokens keep old scope until users re-login.)
+2. **Narrow the OAuth scope** — `src/api/auth.js` requests `scope: 'repo user'`. For a public repo, `public_repo` suffices and grants less. Edit the string in `auth.js`, commit, push. (Existing tokens keep old scope until users re-login.)
 
-3. **State validation (CSRF hardening)** — `auth.js` sends a random `state` param, but `callback.js` doesn't verify it (the current code never stores it). For a small team this is an acceptable, known limitation; note it if you ever expand access.
-
-4. **Grow the CMS to match the site** — every future content type (blog posts, events, pages) becomes a `collections:` entry in `config.yml` mapping form widgets to files/sections under `content/`. The media library uploads into `static/img` (already configured via `media_folder`).
+3. **Grow the CMS to match the site** — every future content type (blog posts, events, pages) becomes a `collections:` entry in `config.yml` mapping form widgets to files/sections under `content/`. The media library uploads into `static/img` (already configured via `media_folder`).
 
 ---
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `/api/auth` returns 404 | Worker not deployed — `main` missing from `wrangler.jsonc`, or deploy failed | Checkpoint 2; inspect Cloudflare deployment logs |
 | `curl.exe -I` shows `client_id=undefined` | Secrets not set / typo in name | Stage 4; names are case-sensitive |
 | GitHub page: `redirect_uri_mismatch` | Callback URL in OAuth App ≠ `https://arc-community.in/api/callback` exactly, or admin was opened on `*.workers.dev` | Fix the app's callback URL; always use the custom domain |
-| Login popup opens then hangs on a blank/`authorizing:github` screen | `/api/callback` 404s or errored (worker route missing, or secret exchange failed) | `curl.exe -I https://arc-community.in/api/callback` — anything but 404/500 is fine (it will 4xx on a bare GET without a `code` param; that's OK). Check worker logs via `npx wrangler tail` while retrying login |
-| Login worked once, then loops or skips screens on later attempts | Old cached `301` redirect replaying a stale `state` | Ensure Step 1.3 (`302`) is deployed; clear browser cache for the site once |
+| Login popup opens then hangs on a blank/`authorizing:github` screen | `/api/callback` 404s or errored (worker route missing, or secret exchange failed) | `curl.exe -I https://arc-community.in/api/callback` — anything but 404/500 is fine (a bare GET returns **400** today — missing `code`, see Step 1.2 — and **403** once Stage 6 is live; that's OK). Check worker logs via `npx wrangler tail` while retrying login |
+| Login worked once, then loops or skips screens on later attempts | Old cached `301` redirect replaying a stale `state` | Ensure Step 1.1 (`302`) is deployed; clear browser cache for the site once |
+| Real login dies at the callback with **403 state mismatch** | The `oauth_state` cookie didn't arrive or expired — browser blocking cookies, or more than 10 min (`Max-Age=600`) spent on GitHub's consent screen | Retry the login; if persistent, clear the site's cookies and confirm the Step 6.1 `Set-Cookie` is deployed (`npx wrangler tail` while retrying shows the exact line) |
 | Login OK, but **Publish** fails with permission error | Logged-in GitHub user lacks write access to the repo | Add as collaborator on `ambedkar-reading-circle/ambedkar-reading-circle.github.io` |
 | Publish says wrong repo / 404 | `config.yml` `repo:`/`branch:` drifted from reality | Verify `repo: ambedkar-reading-circle/ambedkar-reading-circle.github.io`, `branch: master` (currently correct) |
 | Commit lands on `master` but site doesn't change | Cloudflare build failed | Dashboard → worker → Deployments; confirm build command runs `hugo` |
@@ -398,18 +579,18 @@ What actually happens, message by message, when "Login with GitHub" is clicked:
 
 1. **Decap (admin popup)** → `GET https://arc-community.in/api/auth`
    Decap constructs this URL from `config.yml`: `base_url` + `auth_endpoint`.
-2. **`functions/api/auth.js`** builds the GitHub authorize URL:
+2. **`src/api/auth.js`** builds the GitHub authorize URL:
    - `client_id` from the env secret — identifies *which* OAuth App
    - `redirect_uri = <origin>/api/callback` — must byte-match the App's registered callback
    - `scope=repo user` — what the token will be allowed to do
-   - `state` — random number, CSRF-nonce (see Stage 6 note 3)
+   - `state` — random CSRF nonce; Stage 6 also plants it in a short-lived cookie for verification
    - Responds **302** → browser follows to `github.com/login/oauth/authorize?...`
-3. **GitHub** shows the user the consent screen; on **Authorize**, GitHub redirects to `https://arc-community.in/api/callback?code=XXX&state=YYY`. The `code` is a short-lived, single-use "voucher".
-4. **`functions/api/callback.js`** POSTs `{client_id, client_secret, code}` to `https://github.com/login/oauth/access_token` — the server-side exchange. This is the whole reason the functions exist: **the client secret never touches the browser.** GitHub returns `{access_token: ...}`.
+3. **GitHub** shows the user the consent screen; on **Authorize**, GitHub redirects to `https://arc-community.in/api/callback?code=XXX&state=YYY`. The `code` is a short-lived, single-use "voucher". `callback.js` first verifies `state` against the cookie planted in step 2 (Stage 6); on mismatch it returns 403 and no exchange happens.
+4. **`src/api/callback.js`** POSTs `{client_id, client_secret, code}` to `https://github.com/login/oauth/access_token` — the server-side exchange. This is the whole reason the handlers exist: **the client secret never touches the browser.** GitHub returns `{access_token: ...}`.
 5. The callback renders a tiny HTML page whose script does `window.opener.postMessage('authorization:github:success:{token}', ...)` — handing the token to the Decap popup that opened it. The popup closes.
 6. **Decap** stores the token and starts calling the GitHub API with it: reads `content/_index.md`, renders the form, and on Publish does `PUT /repos/.../contents/content/_index.md` — which is a commit.
 
-Security properties you get from this shape: the secret lives only in Cloudflare; the token lives only in the editor's browser; GitHub enforces who may push.
+Security properties you get from this shape: the secret lives only in Cloudflare; the token lives only in the editor's browser; GitHub enforces who may push; and the Stage 6 state check closes the login-CSRF hole.
 
 ## Appendix B — `config.yml`, annotated
 

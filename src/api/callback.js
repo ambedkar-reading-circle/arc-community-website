@@ -16,29 +16,33 @@ function renderBody(status, content) {
     return blob;
 }
 
-export async function onRequest(context) {
-    const {
-        request, // same as existing Worker API
-        env, // same as existing Worker API
-        params, // if filename includes [id] or [[path]]
-        waitUntil, // same as ctx.waitUntil in existing Worker API
-        next, // used for middleware or to fetch assets
-        data, // arbitrary space for passing data between middlewares
-    } = context;
+function htmlResponse(status, body) {
+    return new Response(body, {
+        headers: {
+            'content-type': 'text/html;charset=UTF-8',
+            'cache-control': 'no-store',
+        },
+        status,
+    });
+}
 
+export async function handleCallback(request, env) {
     const client_id = env.GITHUB_CLIENT_ID;
     const client_secret = env.GITHUB_CLIENT_SECRET;
 
     try {
         const url = new URL(request.url);
         const code = url.searchParams.get('code');
+        if (!code) {
+            return new Response('missing code parameter', { status: 400 });
+        }
         const response = await fetch(
             'https://github.com/login/oauth/access_token',
             {
                 method: 'POST',
                 headers: {
                     'content-type': 'application/json',
-                    'user-agent': 'cloudflare-functions-github-oauth-login-demo',
+                    'user-agent': 'arc-community-website-oauth',
                     'accept': 'application/json',
                 },
                 body: JSON.stringify({ client_id, client_secret, code }),
@@ -46,12 +50,7 @@ export async function onRequest(context) {
         );
         const result = await response.json();
         if (result.error) {
-            return new Response(renderBody('error', result), {
-                headers: {
-                    'content-type': 'text/html;charset=UTF-8',
-                },
-                status: 401
-            });
+            return htmlResponse(401, renderBody('error', result));
         }
         const token = result.access_token;
         const provider = 'github';
@@ -59,20 +58,10 @@ export async function onRequest(context) {
             token,
             provider,
         });
-        return new Response(responseBody, {
-            headers: {
-                'content-type': 'text/html;charset=UTF-8',
-            },
-            status: 200
-        });
+        return htmlResponse(200, responseBody);
 
     } catch (error) {
         console.error(error);
-        return new Response(error.message, {
-            headers: {
-                'content-type': 'text/html;charset=UTF-8',
-            },
-            status: 500,
-        });
+        return htmlResponse(500, 'Internal Server Error');
     }
 }
