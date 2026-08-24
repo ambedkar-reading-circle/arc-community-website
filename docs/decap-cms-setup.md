@@ -1,7 +1,7 @@
 # Decap CMS Setup & Wiring Guide
 
-**Status:** Draft — Stage 1 executed via native Worker wiring (`src/` handlers + router, uncommitted); Stages 2–7 awaiting execution
-**Date:** 2026-08-23
+**Status:** Executed through Checkpoint 5 (2026-08-24) — CMS pipeline live. Stage 6 (CSRF hardening) **not yet applied**. Execution diverged from this plan in one major way (the deploy pipeline never existed as assumed) and survived one production incident; both are recorded in [§11 As-built record](#11-as-built-record--how-execution-diverged-from-this-plan).
+**Date:** 2026-08-23 (plan) · 2026-08-24 (as-built record)
 **Audience:** Engineer taking ownership of the ARC content pipeline
 **Time estimate:** 75–105 minutes end to end (45 min if GitHub/Cloudflare access is already sorted)
 
@@ -27,6 +27,7 @@ Every stage ends with a **checkpoint**. Do not move to the next stage until the 
 - [8. Stage 6 — Validate the OAuth state (CSRF hardening)](#8-stage-6--validate-the-oauth-state-csrf-hardening)
 - [9. Stage 7 — Recommended next steps](#9-stage-7--recommended-next-steps)
 - [10. Troubleshooting](#10-troubleshooting)
+- [11. As-built record — how execution diverged from this plan](#11-as-built-record--how-execution-diverged-from-this-plan)
 - [Appendix A — The OAuth flow, annotated](#appendix-a--the-oauth-flow-annotated)
 - [Appendix B — Decap config.yml, annotated](#appendix-b--decap-configyml-annotated)
 
@@ -56,14 +57,15 @@ The full round-trip:
  3. Authorizes ◄──────────────────────────────────────┘
  4. /api/callback hands the
     token to Decap ◄──────────────────────────────────┘
- 5. Edits the form,
-    clicks Publish ──► commit to `master` of
-                       ambedkar-reading-circle/
-                       ambedkar-reading-circle.github.io
-                       (content/_index.md) ──────────► Workers Builds notices push
-                                                     runs `hugo` + `wrangler deploy`
-                                                                                    6. Site updated
-                                                                                       within ~1 min
+  5. Edits the form,
+     clicks Publish ──► commit to `master` of
+                        ambedkar-reading-circle/
+                        arc-community-website
+                        (content/_index.md) ──────────► GitHub Actions notices push
+                                                      npm ci → tailwind → hugo
+                                                      → wrangler deploy (v4)
+                                                                                     6. Site updated
+                                                                                        within ~1 min
 ```
 
 Why the OAuth dance at all? Because Decap needs permission to commit to your repo. It asks GitHub for a personal token via OAuth. GitHub will only hand that token to a **registered OAuth App** through a **server-side code exchange** — and the "server" here is two small handlers we host ourselves (`src/api/auth.js` and `src/api/callback.js`). Those handlers need two secrets (a GitHub client ID and client secret) to prove which app is asking.
@@ -77,14 +79,15 @@ That's the entire system: **Decap UI + our two auth handlers + GitHub + Cloudfla
 | Piece | File | State |
 |---|---|---|
 | CMS app shell | `static/admin/index.html` | ✅ Working — loads Decap from unpkg CDN; Hugo copies `static/` verbatim, so it deploys at `/admin/` |
-| CMS config | `static/admin/config.yml` | ✅ Working — deployed and verified live; points at `ambedkar-reading-circle/ambedkar-reading-circle.github.io`, branch `master` (matches the actual remote — the rename was handled correctly) |
-| OAuth start | `src/api/auth.js` | ⚠️ Native Worker handler, correct, **never deployed** |
-| OAuth finish | `src/api/callback.js` | ⚠️ Native Worker handler, correct, **never deployed** |
+| CMS config | `static/admin/config.yml` | ✅ Working — deployed and verified live; points at `ambedkar-reading-circle/arc-community-website` (renamed from `.github.io` — see §11.4), branch `master` |
+| OAuth start | `src/api/auth.js` | ✅ Deployed and live (recovered after §11.3 incident) |
+| OAuth finish | `src/api/callback.js` | ✅ Deployed and live (recovered after §11.3 incident) |
 | Content | `content/_index.md` | ✅ Working — the under-construction homepage |
 | Site build | `layouts/`, `hugo.toml` | ✅ Working — Hugo renders `content/_index.md` into the homepage |
 | Deploy config | `wrangler.jsonc` | ✅ Wired — `main: "src/worker.js"` + `run_worker_first: ["/api/*"]`, serves `public/` as static assets |
-| Secrets | — | ❌ `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` not yet set on Cloudflare |
-| GitHub OAuth App | — | ❌ Not yet registered |
+| CI/CD | `.github/workflows/deploy.yml` | ✅ Green on push to `master` (not in the original plan — see §11.1) |
+| Secrets | — | ⚠️ `GITHUB_CLIENT_ID` restored; `GITHUB_CLIENT_SECRET` **must be re-set** after §11.3 wiped it |
+| GitHub OAuth App | — | ✅ Registered as "ARC Community Website CMS" (plan suggested "ARC Content Manager" — cosmetic) |
 
 ## 2. The diagnosis — why login currently breaks
 
@@ -320,16 +323,15 @@ git commit -m "Serve OAuth endpoints natively from the Worker"
 
 Two paths. **Use Path A** — it keeps deploys consistent forever. Path B is the manual override.
 
-### Path A — Push and let Cloudflare build (preferred)
+### Path A — Push and let GitHub Actions build (preferred, as built)
 
-The site auto-deploys via Cloudflare's git integration (Workers Builds) on every push to `master`.
+The plan originally assumed Cloudflare's own git integration (Workers Builds) would auto-deploy on push. **That integration never existed on this project** — discovered only when a CMS publish landed on `master` and the live site didn't change (full story in §11.1). The auto-deploy that actually exists is GitHub Actions:
 
-1. First, sanity-check the build configuration once (Cloudflare dashboard → Workers & Pages → **arc-community-website** → **Settings → Build**):
-   - **Build command:** must run Hugo *before* Wrangler uploads assets — e.g. `hugo`. (Git history shows a past double-build issue — there should be exactly one build command, in exactly one place. If the dashboard has a build command, `wrangler.jsonc` should *not* also carry one.)
-   - **Deploy command:** `npx wrangler deploy`
-   - **Root directory:** repo root.
-2. `git push origin master`
-3. Watch the build: dashboard → the worker → **Deployments**. Wait for "Success".
+1. `.github/workflows/deploy.yml` triggers on every push to `master` (also on manual `workflow_dispatch`).
+2. Pipeline: `npm ci` → `npm run css:build` (Tailwind — `assets/css/tw.css` is gitignored, so CI must compile it) → `hugo --minify` (pinned `0.164.0` to match local dev) → `wrangler deploy` (pinned v4 — the action's default 3.90.0 predates `wrangler.jsonc` support).
+3. Authentication is via **repo-level secrets** — `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in GitHub → Settings → Secrets and variables → Actions. No personal login is involved, which is exactly why editors never need Cloudflare credentials (§11.6).
+
+To deploy: `git push origin master`, then watch the repo's **Actions** tab. Green check = live.
 
 ### Path B — Manual deploy from your machine
 
@@ -421,7 +423,7 @@ Now do the whole flow as an editor would:
 3. The popup closes itself and Decap loads, showing the **Home / Under Construction** collection with one entry.
 4. Open the entry, tweak the message text, hit **Save** (or **Publish**).
 5. In a another tab, open the repo on GitHub: `content/_index.md` should show a **new commit authored by you** — Decap commits *as the logged-in GitHub user*, using their token.
-6. Cloudflare Workers Builds picks up the push → rebuilds → within a minute or two `https://arc-community.in/` shows your edit.
+6. GitHub Actions picks up the push → builds (Tailwind + Hugo) → `wrangler deploy` → within a minute or two `https://arc-community.in/` shows your edit. Watch it happen in the repo's **Actions** tab.
 
 **Things worth knowing before you demo this to editors:**
 
@@ -564,12 +566,84 @@ With the pipeline working (Stage 5) and hardened (Stage 6), remaining improvemen
 | Login popup opens then hangs on a blank/`authorizing:github` screen | `/api/callback` 404s or errored (worker route missing, or secret exchange failed) | `curl.exe -I https://arc-community.in/api/callback` — anything but 404/500 is fine (a bare GET returns **400** today — missing `code`, see Step 1.2 — and **403** once Stage 6 is live; that's OK). Check worker logs via `npx wrangler tail` while retrying login |
 | Login worked once, then loops or skips screens on later attempts | Old cached `301` redirect replaying a stale `state` | Ensure Step 1.1 (`302`) is deployed; clear browser cache for the site once |
 | Real login dies at the callback with **403 state mismatch** | The `oauth_state` cookie didn't arrive or expired — browser blocking cookies, or more than 10 min (`Max-Age=600`) spent on GitHub's consent screen | Retry the login; if persistent, clear the site's cookies and confirm the Step 6.1 `Set-Cookie` is deployed (`npx wrangler tail` while retrying shows the exact line) |
-| Login OK, but **Publish** fails with permission error | Logged-in GitHub user lacks write access to the repo | Add as collaborator on `ambedkar-reading-circle/ambedkar-reading-circle.github.io` |
-| Publish says wrong repo / 404 | `config.yml` `repo:`/`branch:` drifted from reality | Verify `repo: ambedkar-reading-circle/ambedkar-reading-circle.github.io`, `branch: master` (currently correct) |
-| Commit lands on `master` but site doesn't change | Cloudflare build failed | Dashboard → worker → Deployments; confirm build command runs `hugo` |
+| Login OK, but **Publish** fails with permission error | Logged-in GitHub user lacks write access to the repo | Add as collaborator on `ambedkar-reading-circle/arc-community-website` |
+| Publish says wrong repo / 404 | `config.yml` `repo:`/`branch:` drifted from reality | Verify `repo: ambedkar-reading-circle/arc-community-website`, `branch: master` (currently correct) |
+| Commit lands on `master` but site doesn't change | GitHub Actions run failed (red ✗ in the repo's Actions tab) | Open the failed run; the step that died names the problem — historically: missing Tailwind build, Hugo version drift, wrangler predating `wrangler.jsonc` (§11.1) |
+| **CI is green but `/api/auth` returns 404** | An **assets-only deploy wiped the Worker**: `wrangler.jsonc` lost its `main` key (or was deployed from a checkout without `src/`) — such a deploy replaces the previous one, deleting the Worker script *and its secrets* | Restore `"main": "src/worker.js"`, push, let CI redeploy, then re-set **both** secrets (`npx wrangler secret put GITHUB_CLIENT_ID` / `...GITHUB_CLIENT_SECRET`) — this exact incident happened; see §11.3 |
 | Admin page itself 404s | `public/` was deployed without `static/admin` (stale build) | Re-run `hugo` before deploy; confirm `public/admin/index.html` exists locally |
 
 Live log debugging tip: `npx wrangler tail` streams the Worker's console output in real time while you retry a login — it shows the exact error line from either function.
+
+---
+
+## 11. As-built record — how execution diverged from this plan
+
+The plan above was written 2026-08-23 and executed 2026-08-24. Stages 1–5 landed and Checkpoints 1–5 all passed, but execution diverged in real ways. Each divergence below changes something the plan still asserts; the affected claims above have been corrected and point here.
+
+### 11.1 The deploy pipeline the plan assumed never existed
+
+**What the plan assumed:** Cloudflare git integration (Workers Builds) watches `master` and rebuilds on push (original Stage 2 Path A, the round-trip diagram, Stage 5 step 6).
+
+**What actually happened:** Checkpoint 5's CMS publish landed as a commit on `master` — and the live site didn't change. There was no Cloudflare git integration and never had been; every deploy to that point was manual `wrangler deploy` (Path B). The plan's Path A described machinery that was never configured.
+
+**What was built instead:** a GitHub Actions workflow, `.github/workflows/deploy.yml` — `npm ci` → `npm run css:build` → `hugo --minify` → `wrangler deploy`, authenticating with the repo-level secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+
+Getting it green took four fixes, each a distinct class of drift worth remembering:
+
+| # | Failure in CI | Root cause | Fix |
+|---|---|---|---|
+| 1 | Workflow never triggered on CMS publishes | Trigger said `branches: [main]`; the repo's branch is `master` | Trigger on `master` |
+| 2 | Hugo: `fingerprint: <nil> can not be transformed` | `assets/css/tw.css` is a compiled artifact and **gitignored** — CI never ran Tailwind, so the asset didn't exist at build time | Added `npm run css:build` before `hugo` |
+| 3 | Hugo: `can't evaluate field Locale in type *langs.Language` | Workflow pinned Hugo `0.145.0`; the templates use newer API (`.Site.Language.Locale`); local dev runs `0.164.0` | Pin `0.164.0`; also removed the template-level `minify` from `layouts/_default/baseof.html` (the CLI's `--minify` already covers it) |
+| 4 | `wrangler deploy`: `Missing entry-point` | wrangler-action defaulted to wrangler **3.90.0**; `wrangler.jsonc` (vs `.toml`) support arrived in 3.91.0, so the action's wrangler couldn't see the config at all | Pin `wranglerVersion: '4'` |
+
+**Rule for reading the plan:** anywhere it says "Workers Builds," read "GitHub Actions."
+
+### 11.2 Workflow files need `workflow` scope to push
+
+The first CLI push of `deploy.yml` was rejected: *"refusing to allow an OAuth App to create or update workflow without `workflow` scope."* GitHub deliberately blocks OAuth tokens from touching `.github/workflows/*` unless explicitly granted that scope. Consequences:
+
+- The first version of the file was created through the **GitHub web UI** (commit `1b4edcd`).
+- `gh auth refresh -h github.com -s workflow` (device-code flow, one browser authorization) then permanently fixed CLI pushes; `gh auth setup-git` wired git to the gh credential.
+
+### 11.3 Incident: a `git reset --hard` silently unpublished the Worker
+
+Recorded honestly, because the signature will recur if the lesson doesn't:
+
+1. The Worker commit (`b1f3c42` — Stage 1 in full, plus the doc sync) was **local-only**; its push had been rejected by the §11.2 scope error, so it sat unpushed.
+2. While resolving the conflict between the locally-committed workflow file and the UI-created one, the operator ran `git reset --hard origin/master`. That silently **discarded `b1f3c42`** — the repo lost `src/`, and `wrangler.jsonc` reverted to a config with no `main`.
+3. The next CI run (otherwise green) shipped that assets-only config. An assets-only `wrangler deploy` **replaces** the previous deployment: the Worker script was deleted in production, and its secrets with it. `/api/auth` went 404 — CMS login broken while content deploys kept working. The asymmetry (green CI, broken admin) is the diagnostic signature.
+4. **Recovery:** the commit still existed in the reflog (as the rebased `9119c96`); it was cherry-picked as `fe77c52`, pushed, and CI redeployed the Worker. `GITHUB_CLIENT_ID` was re-set via `npx wrangler secret put`. `GITHUB_CLIENT_SECRET` is unreadable from anywhere and must be re-pasted once from the OAuth App page (Stage 4 command).
+
+Standing lessons:
+
+- **An unpushed local commit is one `reset --hard` away from not existing.** Push early, push often.
+- **A checkout whose `wrangler.jsonc` lacks `main` is a loaded gun** — any deploy from it (CI or manual) wipes the Worker *and its secrets*. The troubleshooting table gained a row for this signature.
+
+### 11.4 Repo renamed
+
+`ambedkar-reading-circle/ambedkar-reading-circle.github.io` → `ambedkar-reading-circle/arc-community-website`. GitHub redirects the old name everywhere (git remotes, API, OAuth), so nothing broke — Checkpoint 5 had already passed under the old name. `static/admin/config.yml` and the local remote were updated to the canonical name anyway; redirects are a compatibility feature, not an identity. Leftover: the repo's GitHub Pages past still shows historical `pages-build-deployment` runs in the Actions tab — harmless (the custom domain points at Cloudflare), and Pages can be disabled under repo Settings → Pages if the noise matters.
+
+### 11.5 Minor deviations
+
+- OAuth App registered as **"ARC Community Website CMS"**, not the plan's suggested "ARC Content Manager" — cosmetic.
+- Cloudflare secrets were set via the dashboard UI rather than `wrangler secret put` — same effect. After §11.3 they must be re-set once more regardless.
+
+### 11.6 Onboarding editors — what they actually need
+
+The Stage 5 note ("access control = GitHub repo access") is exactly right, and the deploy side needs **nothing** from editors:
+
+| Editor needs | Who provides | When |
+|---|---|---|
+| A GitHub account | editor | once |
+| **Write access** — repo → Settings → Collaborators → Add people | admin | once |
+| One-time "Authorize" click on the OAuth consent screen | editor, via the existing login flow | once per login (the token persists in their browser until Logout) |
+| GitHub token | **Minted automatically** by `/api/auth` → `/api/callback` at login; bound to *their* account; stored in *their* browser only | automatic |
+| Cloudflare token | **Nobody** — CI deploys authenticate with the repo-level `CLOUDFLARE_API_TOKEN` secret; whoever pushed is irrelevant | never |
+
+No editor ever creates a token, installs anything, or needs to know Cloudflare exists. Onboarding is literally one collaborator invite; **Publish** rides the same GitHub Actions pipeline as every other commit to `master` (~40 s to live).
+
+Before handing `/admin` to editors beyond the core team, the plan's own advice stands, and the infra now makes it cheap: land **Stage 6** (state validation) first; then consider Stage 7's `editorial_workflow` (drafts become PRs instead of direct commits to `master`) and `public_repo` scope narrowing — the repo is public, so the narrower scope suffices and each editor's login token then cannot touch their private repositories.
 
 ---
 
@@ -597,7 +671,7 @@ Security properties you get from this shape: the secret lives only in Cloudflare
 ```yaml
 backend:
   name: github                          # talk to GitHub directly (no Netlify git-gateway)
-  repo: ambedkar-reading-circle/ambedkar-reading-circle.github.io
+  repo: ambedkar-reading-circle/arc-community-website  # renamed from .github.io (§11.4); old name still resolves via redirect
   branch: master                        # where Publish commits land
   site_domain: https://arc-community.in # informational for github backend
   base_url: https://arc-community.in    # where the OAuth popup is served from

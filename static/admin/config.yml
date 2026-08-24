@@ -1,6 +1,6 @@
 backend:
   name: github
-  repo: ambedkar-reading-circle/ambedkar-reading-circle.github.io
+  repo: ambedkar-reading-circle/arc-community-website
   branch: master
   site_domain: https://arc-community.in
   base_url: https://arc-community.in
