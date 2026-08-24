@@ -1,8 +1,10 @@
 name: Build & Deploy to Cloudflare
+
 on:
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -10,20 +12,28 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup Hugo
-        uses: peaceiris/actions-hugo@v3
-        with:
-          hugo-version: '0.145.0'
-          extended: true
-      - name: Build
-        run: hugo --minify
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Build Tailwind CSS
+        run: npm run css:build
+
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v3
+        with:
+          hugo-version: '0.145.0'
+          extended: true
+
+      - name: Build Hugo site
+        run: hugo --minify
+
       - name: Deploy to Cloudflare
         uses: cloudflare/wrangler-action@v3
         with:
