@@ -20,7 +20,7 @@ jobs:
       - name: Cache Hugo binary
         uses: actions/cache@v4
         with:
-          path: /home/runner/.hostedtoolcache/hugo
+          path: /home/runner/actions_hugo
           key: hugo-0.164.0-extended-linux
 
       - name: Setup Hugo

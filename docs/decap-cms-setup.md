@@ -328,7 +328,7 @@ Two paths. **Use Path A** — it keeps deploys consistent forever. Path B is the
 The plan originally assumed Cloudflare's own git integration (Workers Builds) would auto-deploy on push. **That integration never existed on this project** — discovered only when a CMS publish landed on `master` and the live site didn't change (full story in §11.1). The auto-deploy that actually exists is GitHub Actions:
 
 1. `.github/workflows/deploy.yml` triggers on every push to `master` (also on manual `workflow_dispatch`).
-2. Pipeline: `npm ci` → `npm run css:build` (Tailwind — `assets/css/tw.css` is gitignored, so CI must compile it) → `hugo --minify` (pinned `0.164.0` to match local dev) → `wrangler deploy` (pinned v4 — the action's default 3.90.0 predates `wrangler.jsonc` support).
+2. Pipeline: `hugo --minify` (pinned `0.164.0`, binary cached between runs) → `wrangler deploy` (pinned v4 — the action's default 3.90.0 predates `wrangler.jsonc` support). The compiled stylesheet `assets/css/tw.css` is **committed**, so CI needs no Node/Tailwind; a `concurrency` block cancels superseded runs so two quick publishes can't deploy out of order (§11.7).
 3. Authentication is via **repo-level secrets** — `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in GitHub → Settings → Secrets and variables → Actions. No personal login is involved, which is exactly why editors never need Cloudflare credentials (§11.6).
 
 To deploy: `git push origin master`, then watch the repo's **Actions** tab. Green check = live.
@@ -644,6 +644,15 @@ The Stage 5 note ("access control = GitHub repo access") is exactly right, and t
 No editor ever creates a token, installs anything, or needs to know Cloudflare exists. Onboarding is literally one collaborator invite; **Publish** rides the same GitHub Actions pipeline as every other commit to `master` (~40 s to live).
 
 Before handing `/admin` to editors beyond the core team, the plan's own advice stands, and the infra now makes it cheap: land **Stage 6** (state validation) first; then consider Stage 7's `editorial_workflow` (drafts become PRs instead of direct commits to `master`) and `public_repo` scope narrowing — the repo is public, so the narrower scope suffices and each editor's login token then cannot touch their private repositories.
+
+### 11.7 CI slimmed: compiled CSS committed, deploy runs serialized
+
+The first green pipeline installed Node + Tailwind on every run — ~31 s end to end, of which roughly 4 s was actual building. Two changes:
+
+- **`assets/css/tw.css` is committed** (un-gitignored). Tailwind becomes a dev-side step: anyone changing styling or layout classes runs `npm run css:build` locally (needed for preview anyway) and commits the result alongside the change. CI dropped `npm ci` and the CSS build entirely.
+- **`concurrency: group=deploy, cancel-in-progress: true`** fixes a latent race: two publishes landing close together used to run concurrently, and if the *older* run's deploy finished last, the live site silently reverted until the next push. Superseded runs are now cancelled automatically.
+
+Tradeoff of the committed CSS: Tailwind generates classes by scanning templates *and content*, so a raw-HTML utility class an editor hand-writes in a CMS markdown field won't exist in `tw.css` until the next dev-side rebuild + commit. Classes referenced from `layouts/` are immune — they change only via dev commits.
 
 ---
 
