@@ -5,6 +5,10 @@ on:
     branches: [master]
   workflow_dispatch:
 
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -13,17 +17,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Cache Hugo binary
+        uses: actions/cache@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build Tailwind CSS
-        run: npm run css:build
+          path: /home/runner/.hostedtoolcache/hugo
+          key: hugo-0.164.0-extended-linux
 
       - name: Setup Hugo
         uses: peaceiris/actions-hugo@v3
@@ -33,6 +31,8 @@ jobs:
 
       - name: Build Hugo site
         run: hugo --minify
+        # assets/css/tw.css is committed precompiled — Tailwind runs only
+        # dev-side (npm run css:build) when styling or layout classes change.
 
       - name: Deploy to Cloudflare
         uses: cloudflare/wrangler-action@v3
